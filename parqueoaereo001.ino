@@ -42,7 +42,7 @@ char clientId[] = "d:" ORG ":" DEVICE_TYPE ":" DEVICE_ID;
 //-------- Topics to suscribe --------//
 const char publishTopic[] = "iot-2/evt/status/fmt/json";
 const char conectionStatusTopic[] = "iot-2/evt/conection/fmt/json";
-const char averageTopic[] = "iot-2/evt/average/fmt/json";
+const char StateTopic[] = "iot-2/evt/state/fmt/json";
 const char responseTopic[] = "iotdm-1/response";
 const char manageTopic[] = "iotdevice-1/mgmt/manage";
 const char updateTopic[] = "iotdm-1/device/update";
@@ -57,7 +57,7 @@ const char rebootTopic[] = "iotdm-1/mgmt/initiate/device/reboot";
 int FWVERSION = 1;
 #define HWVERSION "ESPTOY1.22"
 #define DESCRIPTIVELOCATION "CAMPUSTEC"
-String myName = DEVICE_ID;
+String myName = String(ESP.getChipId());
 
 
 //-------- MQTT information --------//
@@ -68,20 +68,18 @@ PubSubClient client(server, 1883, callback, wifiClient);
 //-------- Ultrasonic sensor pins and variables --------//
 int iPinTrigger = 5; //D1
 int iPinEcho =  4; //D2
-boolean ultrasonic1 = false, a = false, b = true;
-int distance;
-int average;
-String StateParking;
-int comparative;
+String StateParking = "Desocupado";
 
 
 //-------- Global variables --------//
-int publishInterval = 30000; // 30 seconds
+int publishInterval = 10000; // 30 seconds
 long lastPublishMillis;
 long lastpub;
 long lastMsg = 0;
 int event = 0;
-bool NTP;
+boolean NTP = false, a, b, c = true;
+int comparative;
+
 
 //-------- HandleUpdate function receive the data, parse and update the info --------//
 void handleUpdate(byte* payload) {
@@ -251,8 +249,8 @@ time_t getNtpTime()
   while (millis() - beginWait < 1500) {
     int size = Udp.parsePacket();
     if (size >= NTP_PACKET_SIZE) {
+
       Serial.println(F("Receive NTP Response"));
-      NTP = true;
       Udp.read(packetBuffer, NTP_PACKET_SIZE);  // read packet into the buffer
       unsigned long secsSince1900;
       // convert four bytes starting at location 40 to a long integer
@@ -260,6 +258,7 @@ time_t getNtpTime()
       secsSince1900 |= (unsigned long)packetBuffer[41] << 16;
       secsSince1900 |= (unsigned long)packetBuffer[42] << 8;
       secsSince1900 |= (unsigned long)packetBuffer[43];
+      NTP = true;
       return secsSince1900 - 2208988800UL + timeZone * SECS_PER_HOUR;
     }
   }
@@ -278,20 +277,38 @@ void udpConnect() {
 
 
 void ISO8601TimeStampDisplay() {
-  // digital clock display of the time
   ISO8601 = String (year(), DEC);
-  ISO8601 += "-";
+  if (month() < 10)
+  {
+    ISO8601 += "0";
+  }
   ISO8601 += month();
-  ISO8601 += "-";
+  if (day() < 10)
+  {
+    ISO8601 += "0";
+  }
   ISO8601 += day();
-  ISO8601 += "T";
+  ISO8601 += " ";
+  if (hour() < 10)
+  {
+    ISO8601 += "0";
+  }
   ISO8601 += hour();
   ISO8601 += ":";
+  if (minute() < 10)
+  {
+    ISO8601 += "0";
+  }
   ISO8601 += minute();
   ISO8601 += ":";
+  if (second() < 10)
+  {
+    ISO8601 += "0";
+  }
   ISO8601 += second();
-  ISO8601 += "-06:00";
-  //Serial.println(ISO8601);
+  //  ISO8601 += "-06:00";
+  Serial.println(ISO8601);
+
 }
 
 time_t prevDisplay = 0; // when the digital clock was displayed
@@ -309,11 +326,11 @@ void checkTime () {
 
 
 //--------  anager function. Configure the wifi connection if not connect put in mode AP--------//
-void wifimanager() {
+boolean wifimanager() {
 
   WiFiManager wifiManager;
   Serial.println(F("empezando"));
-  if (!  wifiManager.autoConnect("flatwifi")) {
+  while (!  wifiManager.autoConnect("flatwifi")) {
     Serial.println(F("error no conecto"));
 
     if (!wifiManager.startConfigPortal("FlatWifi")) {
@@ -326,7 +343,7 @@ void wifimanager() {
     Serial.print(F("."));
   }
   //if you get here you have connected to the WiFi
-
+  return true;
   Serial.println(F("connected...yeey :)"));
 
 }
@@ -335,48 +352,55 @@ void wifimanager() {
 
 void publishData() {
   checkTime();
+  if (!client.loop()) {
+    mqttConnect();
+  }
   StaticJsonBuffer<200> jsonbuffer;
   JsonObject& root = jsonbuffer.createObject();
   JsonObject& d = root.createNestedObject("d");
   JsonObject& data = d.createNestedObject("data");
+  data["id"] = myName;
   data["state"] = StateParking;
   data["time"] = ISO8601;
   data["event"] = event;
   char payload[100];
   root.printTo(payload, sizeof(payload));
 
-  Serial.print("Sending payload: ");
+  Serial.print(F("Sending payload: "));
   Serial.println(payload);
   if (client.publish(publishTopic, payload, byte(sizeof(payload)))) {
     Serial.println("Publish OK");
   }
   else {
-    Serial.println("Publish FAILED");
+    Serial.println(F("Publish FAILED"));
+    delay(1000);
+    publishData();
   }
 }
 
 
-/*Publish average()
- * publish the average of the magnetic sensor to mqtt server
+/* MQTTPublishStates()
+ * publish the the words that receive in json format
  *
  *
  *
  */
 
-void publishAverage() {
+void MQTTPublishStates(String data1, String text) {
 
   StaticJsonBuffer<1024> jsonbuffer;
   JsonObject& root = jsonbuffer.createObject();
   JsonObject& d = root.createNestedObject("d");
   JsonObject& data = d.createNestedObject("data");
-  data["average"] = average;
-  char payload[1024];
+  data["id"] = myName;
+  data[data1] = text;
+  char payload[200];
   root.printTo(payload, sizeof(payload));
 
-  Serial.print("Sending payload: ");
+  Serial.print(F("Sending payload: "));
   Serial.println(payload);
-  if (client.publish(averageTopic, payload, byte(sizeof(payload)))) {
-    Serial.println("Publish OK");
+  if (client.publish(StateTopic, payload, byte(sizeof(payload)))) {
+    Serial.println(F("Publish OK"));
   }
   else {
     Serial.println("Publish FAILED");
@@ -385,91 +409,71 @@ void publishAverage() {
 
 }
 
-void ultrasonicSetup() {
-  for (int i = 0; i < 50; i++) {
-    ultrasonicsensor();
-    average += distance;
-  }
-  average /= 50;
-  publishAverage();
-}
+
 
 
 //-------- setup  --------//
 
 void setup() {
-  delay(30000);
   Serial.begin(115200);
   Serial.println();
 
   pinMode(iPinTrigger, OUTPUT);
   pinMode(iPinEcho, INPUT);
-  while (WiFi.status() != WL_CONNECTED) {
-    wifimanager();
-    delay(1000);
-  }
-
+  wifimanager();
   while (NTP == false) {
     udpConnect ();
-    delay(500);
   }
   mqttConnect();
-    if (client.publish(conectionStatusTopic, "conectado")) {
-      Serial.println(F("device Publish ok"));
-    }
-
-    else {
-      Serial.print(F("device Publish failed:"));
-    }
+  MQTTPublishStates("online", "conectado");
+  // delay(15000);
   initManagedDevice();
-  ultrasonicSetup();
+  measureAverage();
+
 }
+long timenow;
 
-void measureUltrasonic() {
-
-  ultrasonicsensor();
-  if (distance < average - 30) {
-    StateParking = "ocupado";
-    ultrasonic1 = true;
-  } if (distance >= average - 10) {
-    ultrasonic1 = false;
-    StateParking = "desocupado";
+void loop() {
+  if (ultrasonicsensor() < comparative - 30) {
+    a = true;
+  } else {
+    a = false;
   }
-  if (a != ultrasonic1) {
-    a = ultrasonic1;
-    lastMsg = millis();
 
+  if (a != b) {
+    lastpub = millis();
+    b = a;
   }
-}
-
-
-
-void compareToPublish() {
-  Serial.println(millis() - lastMsg);
-  if ( millis() - lastMsg > publishInterval) {
-    if (a != b) {
-      checkTime();
+  if (timenow - lastpub > publishInterval) {
+    if (c != b) {
+      if (b) {
+        StateParking = "Ocupado";
+      } else {
+        StateParking = "Desocupado";
+      }
+      lastpub = millis();
       publishData();
-      b = a;
-      lastMsg = millis(); 
-      if (a == false) {
-
+      if(!b){
         event++;
       }
+      c=b;
     }
-  }
-}
-void loop() {
 
-  measureUltrasonic();
-  compareToPublish();
-
-  if (!client.loop()) {
-    mqttConnect();
+  } else {
+    timenow = millis();
   }
+  delay(1000);
 }
 
-void ultrasonicsensor() {
+void measureAverage() {
+  for (int i = 0; i < 10; i++) {
+    comparative += ultrasonicsensor();
+  }
+  comparative /= 10;
+  MQTTPublishStates("average", String(comparative));
+}
+
+int ultrasonicsensor() {
 
   digitalWrite(iPinTrigger, LOW);
   digitalWrite(iPinTrigger, HIGH);
@@ -491,6 +495,6 @@ void ultrasonicsensor() {
 
   Serial.print(fDistance);
   Serial.println(F("cm"));
-  distance = int(fDistance);
   delay(100);
+  return fDistance;
 }
