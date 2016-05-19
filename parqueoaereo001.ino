@@ -42,7 +42,6 @@ char clientId[] = "d:" ORG ":" DEVICE_TYPE ":" DEVICE_ID;
 //-------- Topics to suscribe --------//
 const char publishTopic[] = "iot-2/evt/status/fmt/json";
 const char conectionStatusTopic[] = "iot-2/evt/conection/fmt/json";
-const char StateTopic[] = "iot-2/evt/state/fmt/json";
 const char responseTopic[] = "iotdm-1/response";
 const char manageTopic[] = "iotdevice-1/mgmt/manage";
 const char updateTopic[] = "iotdm-1/device/update";
@@ -131,6 +130,8 @@ void callback(char* topic, byte* payload, unsigned int payloadLength) {
 
   if (strcmp (rebootTopic, topic) == 0) {
     Serial.println(F("Rebooting..."));
+    MQTTPublishStates("connection","rebooting");
+    delay(1000);
     ESP.restart();
   }
 
@@ -399,7 +400,7 @@ void MQTTPublishStates(String data1, String text) {
 
   Serial.print(F("Sending payload: "));
   Serial.println(payload);
-  if (client.publish(StateTopic, payload, byte(sizeof(payload)))) {
+  if (client.publish(conectionStatusTopic, payload, byte(sizeof(payload)))) {
     Serial.println(F("Publish OK"));
   }
   else {
@@ -462,7 +463,9 @@ void loop() {
   } else {
     timenow = millis();
   }
-  delay(1000);
+for(int i =0;i<1000;i+=10){
+  delay(10);
+}
 }
 
 void measureAverage() {
