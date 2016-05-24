@@ -1,10 +1,10 @@
 
 //-------- Required Libraries --------//
-#include <ESP8266WiFi.h>
+#include <ESP8266WiFi.h>  //core for ESP8266
 #include <PubSubClient.h> // https://github.com/knolleary/pubsubclient/releases/tag/v2.3
 #include <ArduinoJson.h> // https://github.com/bblanchon/ArduinoJson/releases/tag/v5.0.7
-#include <ESP8266WebServer.h>
-#include <DNSServer.h>
+#include <ESP8266WebServer.h> //need it to use wifimanager
+#include <DNSServer.h>      //need it to use wifimanager
 #include <WiFiManager.h>          //https://github.com/tzapu/WiFiManager
 #include <TimeLib.h> // TimeTracking
 #include <WiFiUdp.h> // UDP packet handling for NTP request
@@ -24,14 +24,15 @@ unsigned int localPort = 2390;  // local port to listen for UDP packets
 const int NTP_PACKET_SIZE = 48; // NTP time is in the first 48 bytes of message
 byte packetBuffer[NTP_PACKET_SIZE]; //buffer to hold incoming & outgoing packets
 
-String ISO8601;
+String ISO8601; //String to show the timestamp
 
 
 //-------- IBM Bluemix Info ---------//
 #define ORG "qnu3pg"
-#define DEVICE_TYPE "pruebayeffri"
-#define DEVICE_ID "ParqueoAereo001"
-#define TOKEN "23lcKp_f1KRqN@RinG"
+#define DEVICE_TYPE "Parqueos"
+#define DEVICE_ID "ParqueoAereo"
+#define TOKEN "9KX51PvwDFfh*@e*+?"
+
 //-------- Customise the above values --------//
 
 char server[] = ORG ".messaging.internetofthings.ibmcloud.com";
@@ -67,17 +68,16 @@ PubSubClient client(server, 1883, callback, wifiClient);
 //-------- Ultrasonic sensor pins and variables --------//
 int iPinTrigger = 5; //D1
 int iPinEcho =  4; //D2
-String StateParking = "Desocupado";
+String StateParking ;// occupied or unoccupied
 
 
 //-------- Global variables --------//
-int publishInterval = 10000; // 30 seconds
-long lastPublishMillis;
-long lastpub;
-long lastMsg = 0;
-int event = 0;
-boolean NTP = false, a, b, c = true;
-int comparative;
+int publishInterval = 10000, publishIntervalAlive = 1000 * 60 * 10; // 30 seconds to publish de event, and 10 minutes to publish the alive state
+long lastpub, lastpubAlive, timenowAlive;//variables to compare the time and send te data
+int event = 0; // change when goes from occupied to unoccupied
+boolean NTP = false, a, b, c = true;// this variables are using to compare the states
+int comparative;//the average of ultrasonic sensor to compare to 
+int loops = 0 ;//number of loops to send trough mqtt
 
 
 //-------- HandleUpdate function receive the data, parse and update the info --------//
@@ -130,7 +130,7 @@ void callback(char* topic, byte* payload, unsigned int payloadLength) {
 
   if (strcmp (rebootTopic, topic) == 0) {
     Serial.println(F("Rebooting..."));
-    MQTTPublishStates("connection","rebooting");
+    MQTTPublishStates("connection", "rebooting");
     delay(1000);
     ESP.restart();
   }
@@ -326,7 +326,7 @@ void checkTime () {
 
 
 
-//--------  anager function. Configure the wifi connection if not connect put in mode AP--------//
+//-------- manager function. Configure the wifi connection if not connect put in mode AP--------//
 boolean wifimanager() {
 
   WiFiManager wifiManager;
@@ -353,9 +353,6 @@ boolean wifimanager() {
 
 void publishData() {
   checkTime();
-  if (!client.loop()) {
-    mqttConnect();
-  }
   StaticJsonBuffer<200> jsonbuffer;
   JsonObject& root = jsonbuffer.createObject();
   JsonObject& d = root.createNestedObject("d");
@@ -395,6 +392,7 @@ void MQTTPublishStates(String data1, String text) {
   JsonObject& data = d.createNestedObject("data");
   data["id"] = myName;
   data[data1] = text;
+  data["time"] = ISO8601;
   char payload[200];
   root.printTo(payload, sizeof(payload));
 
@@ -430,11 +428,14 @@ void setup() {
   // delay(15000);
   initManagedDevice();
   measureAverage();
+  timenowAlive = millis();
+
 
 }
 long timenow;
 
 void loop() {
+  
   if (ultrasonicsensor() < comparative - 30) {
     a = true;
   } else {
@@ -454,20 +455,32 @@ void loop() {
       }
       lastpub = millis();
       publishData();
-      if(!b){
+      if (!b) {
         event++;
       }
-      c=b;
+      c = b;
     }
 
   } else {
     timenow = millis();
   }
-for(int i =0;i<1000;i+=10){
-  delay(10);
+  for (int i = 0; i < 5000; i += 10) {
+    delay(10);
+  }
+  if (!client.loop()) {
+    mqttConnect();
+  }
+  timenowAlive = millis();
+  alive();
 }
-}
+void alive() {
+  if (timenowAlive - lastpubAlive > publishIntervalAlive) {
+    MQTTPublishStates("online", String(loops));
+    lastpubAlive = millis();
+    loops++;
+  }
 
+}
 void measureAverage() {
   for (int i = 0; i < 10; i++) {
     comparative += ultrasonicsensor();
